@@ -554,6 +554,31 @@ texDrop.addEventListener('drop',e=>readImg(e.dataTransfer.files[0]));
 
 // ---------------- reemplazar pieza por un producto real (link) ----------------
 function lnkStat(t){const el=$('lnkStat');if(el)el.textContent=t;}
+async function toDataURL(proxy,u){if(!u)return null;if(/^data:/.test(u))return u;
+  try{const b=await fetch(proxy+'?img='+encodeURIComponent(u)).then(r=>r.json());return (b&&b.imageData)||null;}catch(e){return null;}}
+// color dominante de una imagen (dataURL), salteando fondo blanco/negro de catálogo
+function dominantColor(dataURL){return new Promise(res=>{
+  try{const img=new Image();
+    img.onload=()=>{try{
+      const n=32,c=document.createElement('canvas');c.width=n;c.height=n;
+      const cx=c.getContext('2d');cx.drawImage(img,0,0,n,n);
+      const d=cx.getImageData(0,0,n,n).data,buckets={};let best=null,bestN=0;
+      for(let i=0;i<d.length;i+=4){const r=d[i],g=d[i+1],b=d[i+2],a=d[i+3];
+        if(a<200)continue;const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+        if(mx>238&&mn>225)continue;        // blanco de catálogo
+        if(mx<22)continue;                 // negro puro
+        const key=(r>>5)+'-'+(g>>5)+'-'+(b>>5);
+        const e=buckets[key]||(buckets[key]={n:0,r:0,g:0,b:0});
+        e.n++;e.r+=r;e.g+=g;e.b+=b;if(e.n>bestN){bestN=e.n;best=e;}}
+      if(!best){res(null);return;}
+      const r=Math.round(best.r/best.n),g=Math.round(best.g/best.n),b=Math.round(best.b/best.n);
+      res('#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join(''));
+    }catch(e){res(null);}};
+    img.onerror=()=>res(null);img.src=dataURL;
+  }catch(e){res(null);}});}
+// pintar la pieza de un color sólido, limpiando cualquier textura previa
+function applyDominantColor(p,color){p.texURL=null;p.color=color;
+  for(const m of p.meshes){if(m.userData.shadow)continue;m.material=m.material.clone();m.material.map=null;m.material.color.set(color);m.material.needsUpdate=true;}}
 async function fetchProductFromLink(){
   if(!sel){lnkStat('Primero seleccioná un mueble en el plano.');return;}
   const url=($('lnkURL').value||'').trim();
@@ -573,12 +598,22 @@ async function fetchProductFromLink(){
     if(d.d)$('eD').value=Math.round(d.d);
     if(d.h)$('eH').value=Math.round(d.h);
     if(d.w||d.d||d.h)applyDims();
-    const tex=it.imageData||(it.images&&it.images[0]);
-    if(tex)applyTex(sel,tex);
+    let tex=it.imageData;
+    if(!tex && it.images && it.images[0]) tex=await toDataURL(proxy,it.images[0]);
+    if(!tex){ // fallback: preview externo (esquiva el bloqueo de ML al servidor)
+      try{
+        const mk=await fetch('https://api.microlink.io/?url='+encodeURIComponent(url)).then(r=>r.json());
+        const iu=mk&&mk.data&&mk.data.image&&(mk.data.image.url||mk.data.image);
+        if((!it.name||it.name==='Producto')&&mk&&mk.data&&mk.data.title)it.name=String(mk.data.title);
+        if(iu)tex=await toDataURL(proxy,iu);
+      }catch(_){}
+    }
+    let applied=false;
+    if(tex){const col=await dominantColor(tex);if(col){applyDominantColor(sel,col);if($('eColor'))$('eColor').value=col;applied=true;}}
     if(it.name){sel.name=String(it.name).slice(0,46);$('eName').value=sel.name;$('selName').textContent=sel.name;}
     syncPiece3D(sel);draw2D();commit();
     const got=[d.w,d.d,d.h].filter(Boolean).map(Math.round);
-    const bits=[got.length?(got.join(' × ')+' cm'):'sin medidas (ajustá a mano)', tex?'foto aplicada en 3D ✓':'sin foto disponible'];
+    const bits=[got.length?(got.join(' × ')+' cm'):'sin medidas (ajustá a mano)', applied?'color del producto aplicado ✓':'sin color disponible'];
     lnkStat('Listo — '+bits.join(' · '));
   }catch(e){
     lnkStat('No se pudo: '+e.message+'. Funciona mejor con MercadoLibre y requiere el proxy desplegado.');
