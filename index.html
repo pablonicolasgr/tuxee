@@ -340,7 +340,7 @@ function makePiece(key,name,w,d,x,z,opts){opts=opts||{};
   const g=new T.Group();const bb=new T.Box3();const tmp=new T.Group();CAT[key].build(tmp);bb.setFromObject(tmp);
   const h=opts.h||(bb.max.y-bb.min.y);CAT[key].build(g);scene.add(g);
   const p={id:nextId++,key:key,name:name,w:w,d:d,h:h,x:x,z:z,y:opts.y||0,rot:opts.rot||0,sx:opts.sx||1,sy:opts.sy||1,sz:opts.sz||1,
-    color:opts.color||CAT[key].c,texURL:opts.tex||null,liftable:!!CAT[key].liftable,group:g,meshes:[]};
+    color:opts.color||CAT[key].c,texURL:opts.tex||null,product:opts.product||null,liftable:!!CAT[key].liftable,group:g,meshes:[]};
   const shp=new T.Mesh(new T.PlaneGeometry(w*1.15,d*1.15),new T.MeshBasicMaterial({map:SHADOWT,transparent:true,depthWrite:false,opacity:0.9}));shp.rotation.x=-Math.PI/2;shp.position.y=0.012;shp.userData.shadow=1;g.add(shp);
   g.traverse(o=>{if(o.isMesh&&!o.userData.shadow){o.userData.pieceRef=p;p.meshes.push(o);}});
   shp.userData.pieceRef=p;
@@ -611,6 +611,7 @@ async function fetchProductFromLink(){
     let applied=false;
     if(tex){const col=await dominantColor(tex);if(col){applyDominantColor(sel,col);if($('eColor'))$('eColor').value=col;applied=true;}}
     if(it.name){sel.name=String(it.name).slice(0,46);$('eName').value=sel.name;$('selName').textContent=sel.name;}
+    sel.product={name:(it.name||sel.name),link:url,site:it.site||'',dims:(d&&(d.w||d.d||d.h))?d:null,imageData:tex||null};
     syncPiece3D(sel);draw2D();commit();
     const got=[d.w,d.d,d.h].filter(Boolean).map(Math.round);
     const bits=[got.length?(got.join(' × ')+' cm'):'sin medidas (ajustá a mano)', applied?'color del producto aplicado ✓':'sin color disponible'];
@@ -648,11 +649,11 @@ $('gFloor').addEventListener('change',commit);
 // ---------------- undo/redo + guardar ----------------
 let hist=[],hi=-1,restoring=false;
 function serialize(){return JSON.stringify({height:MODEL.height,thick:MODEL.thick,wallColor:MODEL.wallColor,floorColor:MODEL.floorColor,walls:MODEL.walls,openings:MODEL.openings,
-  furniture:furniture.map(p=>({key:p.key,name:p.name,w:p.w,d:p.d,h:p.h,x:p.x,z:p.z,y:p.y,rot:p.rot,sx:p.sx,sy:p.sy,sz:p.sz,color:p.color,tex:p.texURL}))});}
+  furniture:furniture.map(p=>({key:p.key,name:p.name,w:p.w,d:p.d,h:p.h,x:p.x,z:p.z,y:p.y,rot:p.rot,sx:p.sx,sy:p.sy,sz:p.sz,color:p.color,tex:p.texURL,product:p.product?{name:p.product.name,link:p.product.link,site:p.product.site,dims:p.product.dims}:null}))});}
 function loadModel(str){restoring=true;const o=JSON.parse(str);MODEL.height=o.height;MODEL.thick=o.thick;MODEL.wallColor=o.wallColor||'#ece7dd';MODEL.floorColor=o.floorColor||'#d8ccb6';MODEL.walls=o.walls||[];MODEL.openings=o.openings||[];
   wid=1;MODEL.walls.forEach(w=>{if(!w.id)w.id=wid;wid=Math.max(wid,w.id+1);});oid=1;MODEL.openings.forEach(x=>{if(!x.id)x.id=oid;oid=Math.max(oid,x.id+1);});
   furniture.slice().forEach(removePiece);
-  for(const d of (o.furniture||[]))makePiece(d.key,d.name,d.w,d.d,d.x,d.z,{rot:d.rot,sx:d.sx,sy:d.sy,sz:d.sz,color:d.color,tex:d.tex,h:d.h,y:d.y});
+  for(const d of (o.furniture||[]))makePiece(d.key,d.name,d.w,d.d,d.x,d.z,{rot:d.rot,sx:d.sx,sy:d.sy,sz:d.sz,color:d.color,tex:d.tex,h:d.h,y:d.y,product:d.product});
   build3D();clearSel();$('gHeight').value=Math.round(MODEL.height*100);$('gThick').value=Math.round(MODEL.thick*100);$('gWall').value=MODEL.wallColor;$('gFloor').value=MODEL.floorColor;draw2D();restoring=false;}
 function commit(){if(restoring)return;hist=hist.slice(0,hi+1);hist.push(serialize());if(hist.length>60)hist.shift();hi=hist.length-1;updUR();save();}
 function updUR(){$('bUndo').disabled=hi<=0;$('bRedo').disabled=hi>=hist.length-1;}
@@ -695,7 +696,24 @@ $('aiGen').addEventListener('click',async()=>{
   try{localStorage.setItem(AIK,key);}catch(e){}
   const model=($('aiModel').value||'gemini-2.5-flash-image').trim(),prompt=$('aiPrompt').value.trim(),aspect=$('aiAspect').value;
   const b64=snapURL.split(',')[1];
-  const body={contents:[{parts:[{inlineData:{mimeType:'image/png',data:b64}},{text:prompt}]}],generationConfig:{responseModalities:['IMAGE']}};
+  const parts=[{inlineData:{mimeType:'image/png',data:b64}}];
+  let refs='',inv='',n=0;
+  for(const p of furniture){
+    const dim=Math.round(effW(p)*100)+'×'+Math.round(effD(p)*100)+'×'+Math.round(p.h*p.sy*100)+' cm';
+    const pr=p.product;
+    if(pr&&pr.imageData){n++;
+      parts.push({inlineData:{mimeType:'image/png',data:pr.imageData.split(',')[1]}});
+      refs+='\n'+n+') '+(pr.name||p.name)+' ('+dim+(pr.site?(' · '+pr.site):'')+') → corresponde a la imagen de referencia '+n;
+    }else{inv+='\n- '+p.name+' ('+dim+')';}
+  }
+  let full=prompt;
+  if(n||inv){
+    full+='\n\nLa PRIMERA imagen es la maqueta 3D del ambiente: respetá su layout, proporciones, posiciones y ángulo de cámara.';
+    if(n)full+='\n\nLas siguientes '+n+' imágenes son PRODUCTOS REALES que están en la escena. Renderizá cada mueble para que coincida con su foto de referencia (material, tapizado, color, estilo y forma), ubicado y escalado como en la maqueta:'+refs;
+    if(inv)full+='\n\nOtros muebles de la escena (sin foto de referencia: respetá su tipo, color y medidas):'+inv;
+  }
+  parts.push({text:full});
+  const body={contents:[{parts}],generationConfig:{responseModalities:['IMAGE']}};
   if(aspect)body.generationConfig.imageConfig={aspectRatio:aspect};
   $('aiStatus').textContent='Generando render… puede tardar unos segundos';$('aiGen').disabled=true;
   try{
