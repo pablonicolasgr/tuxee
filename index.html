@@ -200,6 +200,7 @@ input[type=range]{width:100%;}
       <div><label>Modelo</label><input id="aiModel" value="gemini-2.5-flash-image"></div>
       <div><label>Proporción</label><select id="aiAspect"><option value="">auto</option><option value="16:9">16:9</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="1:1">1:1</option></select></div>
     </div>
+    <div id="aiProds" style="font-size:11.5px;color:#cdbfae;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:8px 10px;margin:6px 0;line-height:1.5"></div>
     <label>Prompt</label>
     <textarea id="aiPrompt">Transformá este render 3D de bloques del interior de un departamento en una fotografía interior fotorrealista. Mantené EXACTAMENTE el mismo layout, las posiciones y proporciones de los muebles, las paredes y el ángulo de cámara. Agregá materiales y texturas realistas, iluminación natural cálida de tarde, sombras suaves, piso de madera, y calidad de fotografía de arquitectura. No inventes muebles ni cambies la distribución.</textarea>
     <div class="aiRow"><button class="bb pri" id="aiGen" style="background:#7a5cff;border-color:#7a5cff">✨ Generar render</button><button class="bb" id="aiClose">Cerrar</button></div>
@@ -685,8 +686,19 @@ commit();$('load').style.display='none';
 // ---------------- Render IA (Nano Banana · Gemini 2.5 Flash Image) ----------------
 const AIK='gemKey';let snapURL=null;
 function captureSnap(){const w=1024,h=Math.round(w*0.72);ren.setSize(w,h,false);cam.aspect=w/h;cam.updateProjectionMatrix();ren.render(scene,cam);const url=c3d.toDataURL('image/png');resize3();return url;}
+function renderProdList(){const el=$('aiProds');if(!el)return;
+  if(!furniture.length){el.innerHTML='No hay muebles en la escena todavía.';return;}
+  const withRef=furniture.filter(p=>p.product&&p.product.imageData);
+  const withName=furniture.filter(p=>p.product&&!p.product.imageData);
+  const plain=furniture.filter(p=>!p.product);
+  let h='<b>Se incluirá en el render:</b><br>';
+  if(withRef.length)h+='✓ Con foto de referencia ('+withRef.length+'): '+withRef.map(p=>p.product.name||p.name).join(', ')+'.<br>';
+  if(withName.length)h+='• Con datos pero sin foto: '+withName.map(p=>p.product.name||p.name).join(', ')+'.<br>';
+  if(plain.length)h+='• Sin link (van por tipo y medidas): '+plain.map(p=>p.name).join(', ')+'.';
+  if(!withRef.length)h+='<br><span style="color:#f3b48a">⚠ Ningún mueble tiene foto de referencia en esta sesión. Para que el render use los productos reales, volvé a tocar “Traer look &amp; medidas del link” en cada mueble antes de renderizar (la foto se guarda solo durante la sesión).</span>';
+  el.innerHTML=h;}
 function openAI(){snapURL=captureSnap();$('aiSnap').src=snapURL;$('aiResultWrap').classList.add('hide');$('aiStatus').textContent='';
-  try{const k=localStorage.getItem(AIK);if(k)$('aiKey').value=k;}catch(e){}$('aiModal').classList.remove('hide');}
+  try{const k=localStorage.getItem(AIK);if(k)$('aiKey').value=k;}catch(e){}renderProdList();$('aiModal').classList.remove('hide');}
 $('bAI').addEventListener('click',openAI);
 $('aiClose').addEventListener('click',()=>$('aiModal').classList.add('hide'));
 $('aiRecap').addEventListener('click',()=>{snapURL=captureSnap();$('aiSnap').src=snapURL;});
