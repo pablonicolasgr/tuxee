@@ -71,6 +71,23 @@ async function fetchImageData(url) {
     return 'data:' + ct + ';base64,' + buf.toString('base64');
   } catch (e) { return null; }
 }
+function og(html, prop) {
+  if (!html) return null;
+  let m = html.match(new RegExp('<meta[^>]+(?:property|name)=["\']og:' + prop + '["\'][^>]+content=["\']([^"\']+)', 'i'));
+  if (m) return m[1];
+  m = html.match(new RegExp('<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:' + prop + '["\']', 'i'));
+  return m ? m[1] : null;
+}
+function dimsFromHtml(html) {
+  if (!html) return null;
+  const out = { w: null, d: null, h: null };
+  const byId = (k) => { const m = html.match(new RegExp('"id":"' + k + '"[^}]*?"value_name":"([^"]+)"', 'i')); return m ? parseLen(m[1]) : null; };
+  const byName = (re) => { const m = html.match(new RegExp('"name":"(?:' + re + ')"[^}]*?"value_name":"([^"]+)"', 'i')); return m ? parseLen(m[1]) : null; };
+  out.w = byId('WIDTH') || byName('Ancho');
+  out.h = byId('HEIGHT') || byName('Alto|Altura');
+  out.d = byId('DEPTH') || byId('LENGTH') || byName('Profundidad|Largo|Fondo');
+  return (out.w || out.d || out.h) ? out : null;
+}
 
 // ---- producto único por link ----
 async function productFromUrl(url) {
@@ -78,20 +95,31 @@ async function productFromUrl(url) {
 
   // ---- MercadoLibre ----
   if (/mercadolib|mercadolivre/i.test(url) || /(ML[A-Z])-?\d{6,}/i.test(url) || host.includes('mercadoli')) {
+    let pageHtml = null, slug = '';
+    try { slug = decodeURIComponent((new URL(url).pathname.split('/').filter(Boolean)[0]) || '').replace(/-/g, ' ').trim(); } catch (e) {}
     let id = mlIdFromText(url);
-    if (!id) {
-      // URL SEO/catálogo sin id visible: abro la página y lo saco del HTML
+    if (!id) { // sin id en la URL: abro la página para encontrarlo
       try {
         const r = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' });
-        if (r.ok) {
-          const html = await r.text();
-          const canon = (html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i) || [])[1]
-            || (html.match(/<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)/i) || [])[1];
-          id = mlIdFromText(canon || '') || mlIdFromText(html);
+        if (r.ok) { pageHtml = await r.text();
+          const canon = (pageHtml.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)/i) || [])[1] || og(pageHtml, 'url');
+          id = mlIdFromText(canon || '') || mlIdFromText(pageHtml);
         }
       } catch (e) {}
     }
-    if (id) { const prod = await mlProduct(id); if (prod) return prod; }
+    let prod = id ? await mlProduct(id) : null;
+    if (prod && prod.imageData) return prod; // mejor caso: API con foto
+    // la API pública suele venir limitada (sin fotos): voy a la página
+    if (!pageHtml) { try { const r = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' }); if (r.ok) pageHtml = await r.text(); } catch (e) {} }
+    let name = (prod && prod.name) || (pageHtml && og(pageHtml, 'title')) || slug || 'Producto';
+    let dims = (prod && prod.dims) || dimsFromHtml(pageHtml);
+    let ogImg = pageHtml ? (og(pageHtml, 'image:secure_url') || og(pageHtml, 'image')) : null;
+    let imageData = (prod && prod.imageData) || await fetchImageData(ogImg);
+    // último recurso: buscar por el nombre y usar la primera foto
+    if (!imageData && slug) {
+      try { const items = await fromMercadoLibre(slug, 1); if (items[0]) { if (!name || name === 'Producto') name = items[0].name; imageData = await fetchImageData(items[0].images && items[0].images[0]); } } catch (e) {}
+    }
+    if (name || imageData || dims) return { site: 'MercadoLibre', name, price: (prod && prod.price) || null, dims: dims || null, images: ogImg ? [ogImg] : [], imageData };
   }
 
   // ---- Arredo (VTEX) ----
@@ -121,14 +149,13 @@ async function productFromUrl(url) {
 
   // ---- genérico (Open Graph) ----
   try {
-    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await fetch(url, { headers: { 'User-Agent': UA } });
     if (r.ok) {
       const html = await r.text();
-      const og = (prop) => { const m = html.match(new RegExp('<meta[^>]+property=["\']og:' + prop + '["\'][^>]+content=["\']([^"\']+)', 'i')); return m ? m[1] : null; };
-      const name = og('title') || (html.match(/<title>([^<]+)<\/title>/i) || [])[1] || 'Producto';
-      const img = og('image');
+      const name = og(html, 'title') || (html.match(/<title>([^<]+)<\/title>/i) || [])[1] || 'Producto';
+      const img = og(html, 'image:secure_url') || og(html, 'image');
       const imageData = await fetchImageData(img);
-      return { site: host, name: name.trim(), price: null, dims: null, images: img ? [img] : [], imageData };
+      return { site: host, name: String(name).trim().slice(0, 80), price: null, dims: dimsFromHtml(html), images: img ? [img] : [], imageData };
     }
   } catch (e) {}
 

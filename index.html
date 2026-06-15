@@ -578,7 +578,8 @@ async function fetchProductFromLink(){
     if(it.name){sel.name=String(it.name).slice(0,46);$('eName').value=sel.name;$('selName').textContent=sel.name;}
     syncPiece3D(sel);draw2D();commit();
     const got=[d.w,d.d,d.h].filter(Boolean).map(Math.round);
-    lnkStat(got.length?('Listo ✓  '+got.join(' × ')+' cm'):'Listo ✓ (sin medidas en la publicación, ajustá a mano)');
+    const bits=[got.length?(got.join(' × ')+' cm'):'sin medidas (ajustá a mano)', tex?'foto aplicada en 3D ✓':'sin foto disponible'];
+    lnkStat('Listo — '+bits.join(' · '));
   }catch(e){
     lnkStat('No se pudo: '+e.message+'. Funciona mejor con MercadoLibre y requiere el proxy desplegado.');
   }
