@@ -1,4 +1,5 @@
 # Netlify config — Monambiente
+# cambio de prueba para deploy
 [build]
   publish = "."
   functions = "netlify/functions"
